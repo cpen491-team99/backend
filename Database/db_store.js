@@ -1,4 +1,3 @@
-// dbEntities.js
 import { runQuery } from './db_driver.js';
 
 /**
@@ -26,14 +25,14 @@ export async function initSchema() {
     CREATE VECTOR INDEX memory_embeddings IF NOT EXISTS
     FOR (m:Memory) ON (m.embedding)
     OPTIONS {indexConfig: {
-      "vector.dimensions": 1024,
-      "vector.similarity_function": "cosine"
+      \`vector.dimensions\`: 1024,
+      \`vector.similarity_function\`: 'cosine'
     }}
   `);
 }
 
 /**
- * Create an Agent node.
+ * Create or Update an Agent node.
  * agent = { a_id, name, persona, attributes }
  */
 export async function createAgent(agent) {
@@ -41,11 +40,12 @@ export async function createAgent(agent) {
 
   const result = await runQuery(
     `
-    CREATE (a:Agent {
-      a_id: $a_id,
-      name: $name,
-      persona: $persona
-    })
+    MERGE (a:Agent { a_id: $a_id })
+    ON CREATE SET 
+        a.name = $name, 
+        a.persona = $persona
+    ON MATCH SET 
+        a.name = $name // Optional: updates name if it changed
     RETURN a
     `,
     { 
@@ -92,29 +92,35 @@ export async function createMemory(memoryObj) {
       m_id: $id,
       description: $content,
       embedding: $embedding,
-      timestamp: datetime({epochSeconds: $timestamp}),
+      timestamp: datetime({epochSeconds: toInteger($timestamp)}),
       msg_type: $msg_type,
       location_name: $location
     })
     
-    // 3. Create the ownership link
     MERGE (owner)-[:OWNS]->(m)
     
-    // 4. (Optional) Link to a Location node for better graph reasoning
+    // Link to Location
     MERGE (loc:Location { name: $location })
     MERGE (m)-[:AT]->(loc)
+
+    // Handle Audience Relationships
+    WITH m
+    UNWIND $audience AS audience_id
+    MERGE (audience_member:Agent { a_id: audience_id })
+    MERGE (m)-[:HEARD_BY]->(audience_member)
     
     RETURN m
   `;
 
   const params = {
     id,
-    embedding, // The driver handles the Float32Array conversion
+    embedding: Float32Array.from(embedding),
     content,
     speaker_id: metadata.speaker_id,
     timestamp: metadata.timestamp,
     msg_type: metadata.msg_type,
-    location: metadata.location
+    location: metadata.location,
+    audience: metadata.audience || [] // Expects an array like ["Fox_01", "Bear_02"]
   };
 
   const result = await runQuery(query, params);
