@@ -1,5 +1,9 @@
 # README 
 
+## Dependencies
+- `npm i mqtt`
+- `npm i -D typescript ts-node @types/node`
+
 ## Start Up
 - Start docker: `docker compose -f infra/mqtt-broker/docker-compose.yml up -d`
 - Rebuild ts for server.js: `npm run build`

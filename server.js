@@ -1,23 +1,22 @@
-const express = require("express");
-
-// require TS output
-const { initBackendMqtt } = require("./dist/src/mqtt/backendClient");
+import express from "express";
+import { initBackendMqtt } from "./dist/src/mqtt/backendClient.js";
 
 const app = express();
-const host = "localhost";
-const port = 3000;
 
-// init mqtt startup
+
+const host = "127.0.0.1";
+// 3000 3001 8080
+const port = 8080;
+
 initBackendMqtt();
 
-app.get("/", (req, res) => {
-  res.send("Server is running.");
-});
+app.get("/", (_req, res) => res.send("Server is running."));
+app.get("/health", (_req, res) => res.json({ ok: true }));
 
-app.get("/health", (req, res) => {
-  res.json({ ok: true });
-});
-
-app.listen(port, host, () => {
+const server = app.listen(port, host, () => {
   console.log(`Listening on http://${host}:${port}`);
+});
+
+server.on("error", (err) => {
+  console.error("Server listen error:", err);
 });
