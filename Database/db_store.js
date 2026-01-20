@@ -48,10 +48,10 @@ export async function createAgent(agent) {
         a.name = $name // Optional: updates name if it changed
     RETURN a
     `,
-    { 
-        a_id, 
-        name, 
-        persona
+    {
+      a_id,
+      name,
+      persona
     }
   );
 
@@ -84,7 +84,7 @@ export async function createLocation(location) {
  */
 export async function createMemory(memoryObj) {
   const { id, embedding, content, metadata } = memoryObj;
-  
+
   const query = `
     MATCH (owner:Agent { a_id: $speaker_id })
     
@@ -103,21 +103,21 @@ export async function createMemory(memoryObj) {
     MERGE (loc:Location { name: $location })
     MERGE (m)-[:AT]->(loc)
 
-    WITH m, $audience AS aud
-
-   // Switch 1: Broadcast if 'world' is present
-    // We create a list of one item if "world" exists, otherwise an empty list
-    FOREACH (_ IN CASE WHEN "world" IN aud THEN [1] ELSE [] END |
+    // Handle Audience Relationships
+    WITH m 
+    CALL {
+        WITH m
+        WITH m WHERE "world" IN $audience
         MERGE (w:GlobalContext { a_id: "world" })
         MERGE (m)-[:BROADCAST_TO]->(w)
-    )
-
-    // Switch 2: Specific agents (automatically skips if aud is only ["world"])
-    FOREACH (aid IN [x IN aud WHERE x <> "world"] |
-        MERGE (am:Agent { a_id: aid })
-        MERGE (m)-[:HEARD_BY]->(am)
-    )
-    
+        RETURN count(*) AS processedCount
+      UNION
+        WITH m
+        UNWIND [x IN $audience WHERE x <> "world"] AS audience_id
+        MERGE (audience_member:Agent { a_id: audience_id })
+        MERGE (m)-[:HEARD_BY]->(audience_member)
+        RETURN count(*) AS processedCount
+    }
     RETURN m
   `;
 
