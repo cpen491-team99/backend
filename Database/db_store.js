@@ -103,11 +103,20 @@ export async function createMemory(memoryObj) {
     MERGE (loc:Location { name: $location })
     MERGE (m)-[:AT]->(loc)
 
-    // Handle Audience Relationships
-    WITH m
-    UNWIND $audience AS audience_id
-    MERGE (audience_member:Agent { a_id: audience_id })
-    MERGE (m)-[:HEARD_BY]->(audience_member)
+    WITH m, $audience AS aud
+
+   // Switch 1: Broadcast if 'world' is present
+    // We create a list of one item if "world" exists, otherwise an empty list
+    FOREACH (_ IN CASE WHEN "world" IN aud THEN [1] ELSE [] END |
+        MERGE (w:GlobalContext { a_id: "world" })
+        MERGE (m)-[:BROADCAST_TO]->(w)
+    )
+
+    // Switch 2: Specific agents (automatically skips if aud is only ["world"])
+    FOREACH (aid IN [x IN aud WHERE x <> "world"] |
+        MERGE (am:Agent { a_id: aid })
+        MERGE (m)-[:HEARD_BY]->(am)
+    )
     
     RETURN m
   `;

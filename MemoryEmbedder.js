@@ -25,7 +25,7 @@ class MemoryEmbedder {
         const embedding = Array.from(result.data);
 
         return {
-            id: crypto.randomUUID(),
+            id: crypto.randomUUID(),// reconsider this attribute. 
             embedding,
             content: text,
             metadata: {
@@ -36,6 +36,14 @@ class MemoryEmbedder {
                 msg_type: msgType
             }
         };
+    }
+
+
+        // Inside MemoryEmbedder class
+    async getQueryVector(text) {
+        if (!this.pipe) throw new Error("Initialize with .init() first!");
+        const result = await this.pipe(text, { pooling: 'mean', normalize: true });
+        return Array.from(result.data);
     }
 }
 
