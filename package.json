@@ -12,7 +12,11 @@
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-icons": "^5.5.0"
+    "react-icons": "^5.5.0",
+    "axios": "^1.13.2",
+		"express": "^4.22.1",
+		"mongodb": "^6.21.0",
+		"ws": "^8.19.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -26,6 +30,10 @@
     "globals": "^16.5.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4"
-  }
+    "vite": "^7.2.4",
+    "nodemon": "^3.1.7"
+  },
+	"engines": {
+		"node": "24.x"
+	}
 }
