@@ -1,26 +1,26 @@
 import type { ChatMessage } from "../types/chat"
 import "../styles/ChatArea.css"
-type ChatAreaProps = {
+
+export type ChatAreaProps = {
     messages: ChatMessage[],
 }
 
 export function ChatArea({ messages }: ChatAreaProps) {
-    if (messages.length === 0) return null
 
-    const leftAuthor = messages[0].author
+    const rightAuthor = messages[0]?.author
 
     return (
     <div className="chat-area">
       <div className="chat-messages">
-        {messages.map(msg => {
-          const isLeft = msg.author === leftAuthor
+        {messages?.map(msg => {
+          const isRight = msg.author === rightAuthor
 
           return (
             <div
-              key={msg.id}
-              className={`chat-message ${isLeft ? "left" : "right"}`}
+              key={msg?.id}
+              className={`chat-message ${isRight ? "right" : "left"}`}
             >
-              <span className="chat-author">{msg.author}</span>
+              <span className="chat-author">{msg?.author}</span>
 
               <div className="chat-bubble">
                 {msg.content}

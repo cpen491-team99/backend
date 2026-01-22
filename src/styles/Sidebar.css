@@ -22,7 +22,7 @@
 }
 
 .sidebar-title {
-  font-size: 30px;
+  font-size: var(--font-header);
   font-weight: 600;
 }
 
@@ -80,7 +80,7 @@
   border-radius: 8px;
   background: #e3e3e3;
   color: #000000;
-  font-size: 30px;
+  font-size: var(--font-header);
   font-weight: 600;
   cursor: pointer;
   transition: background 0.2s, transform 0.1s;

@@ -11,16 +11,18 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding-bottom: 60px;
 }
 
 .chat-message {
   display: flex;
   flex-direction: column;
   width: 100%;
+  font-size: var(--font-chat)
 }
 
 .chat-author {
-  font-size: 20px;
+  font-size: var(--font-author);
   font-weight: 400;
   color: #000000;
   margin-bottom: 4px;
@@ -60,8 +62,71 @@
 }
 
 .chat-container {
+  display: flex;
+  flex-direction: column;
   background: #d5dcd3;
   border-radius: 12px;
   height: 86%;
   border: 1px solid #000000;
+  padding-bottom: 8px;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* Agent Page Chat specifics */
+.agent-chat-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+}
+
+.chat-input-form {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid #ccc;
+}
+
+.chat-input-form input {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid #ccc;
+}
+
+.chat-input-form button {
+  padding: 8px 16px;
+  border-radius: 12px;
+  background: #2e5733;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+/* Input form styling */
+.chat-input-form {
+  position: sticky;   /* stick to bottom */
+  bottom: 0;
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  z-index: 10; /* stay above messages */
+  background-color: #d5dcd3;
+}
+
+.chat-input-form input {
+  flex: 1;                     /* fill remaining space */
+  padding: 10px 14px;
+  border-radius: 24px;         /* rounded corners */
+  border: 1px solid #000000;
+  outline: none;
+  background-color: #f0f0f0;  /* input background */
+  color: #000;                 /* text color */
+}
+
+/* Placeholder text color */
+.chat-input-form input::placeholder {
+  color: #888;
 }

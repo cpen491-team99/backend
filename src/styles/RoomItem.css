@@ -30,11 +30,11 @@
 
 .room-name {
   font-weight: 500;
-  font-size: 14px;
+  font-size: var(--font-room-titles);
 }
 
 .room-occupants {
-  font-size: 12px;
+  font-size: var(--font-room-occupants);
   color: #3d3d3d;
 }
 
