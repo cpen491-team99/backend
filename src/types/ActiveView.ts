@@ -1,0 +1,1 @@
+export type ActiveView = { type: "room", id: string } | { type: "footer", id: "settings" | "agent" } | { type: "intro", id: "landing-page" } | null

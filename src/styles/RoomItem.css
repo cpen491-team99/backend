@@ -1,0 +1,43 @@
+.room-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s, border 0.2s;
+
+  border: 1px solid #000000; /* this adds a stroke around each room */
+  background: #e3e3e3; /* background color */
+}
+
+.room-item:hover {
+  background: #74937a; 
+  border-color: #000000; /* highlight stroke on hover */
+}
+
+.room-item.active {
+  background: #2e5733;
+  border-color: #000000; /* stroke for active room */
+  color: #ffffff;
+}
+
+.room-info {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  align-items: flex-start;
+}
+
+.room-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.room-occupants {
+  font-size: 12px;
+  color: #3d3d3d;
+}
+
+.room-item.active .room-occupants {
+    color: #ffffff;
+}
