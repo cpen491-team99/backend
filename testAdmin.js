@@ -1,153 +1,65 @@
-import {
-  initSchema,
-  saveUser,
-  saveAgent,
-  saveChatroom,
-  saveMessage,
-} from './Database/admin_store.js';
-import {
-  listChatrooms,
-  listUsers,
-  listMessagesBySender,
-} from './Database/admin_query.js';
+// ...existing code...
+import * as adminStore from './Database/admin_store.js';
+import * as adminQuery from './Database/admin_query.js';
 import { closeDriver } from './Database/db_driver.js';
 
 async function main() {
   try {
-    console.log('Initializing schema...');
-    await initSchema();
+    // Storage Test
+    // await adminStore.initSchema();
+    // await adminStore.saveUser(...);
+    // await adminStore.saveAgent(...);
+    // await adminStore.saveChatroom(...);
+    // await adminStore.saveMessage(...);
 
-    console.log('Creating users...');
-    const users = [
-      {
-        id: 'u1',
-        username: 'alice',
-        email: 'alice@example.com',
-        preferences: { theme: 'light', language: 'en' },
-      },
-      {
-        id: 'u2',
-        username: 'bob',
-        email: 'bob@example.com',
-        preferences: { theme: 'dark', language: 'en' },
-      },
-      {
-        id: 'u3',
-        username: 'carol',
-        email: 'carol@example.com',
-        preferences: { theme: 'light', language: 'fr' },
-      },
-    ];
-    for (const u of users) {
-      await saveUser(u);
-    }
-
-    console.log('Creating agents (1-1 with users)...');
-    const agents = [
-      {
-        id: 'a1',
-        uid: 'u1',
-        agentname: 'alice-bot',
-        persona: 'Helpful assistant for Alice',
-      },
-      {
-        id: 'a2',
-        uid: 'u2',
-        agentname: 'bob-bot',
-        persona: 'Productivity coach for Bob',
-      },
-      {
-        id: 'a3',
-        uid: 'u3',
-        agentname: 'carol-bot',
-        persona: 'French learning companion for Carol',
-      },
-    ];
-    for (const a of agents) {
-      await saveAgent(a);
-    }
-
-    console.log('Creating chatrooms...');
-    const chatrooms = [
-      { id: 'r1', roomname: 'lobby' },
-      { id: 'r2', roomname: 'park' },
-      { id: 'r3', roomname: 'alley' },
-    ];
-    for (const c of chatrooms) {
-      await saveChatroom(c);
-    }
-
-    console.log('Creating messages...');
-    // Some messages from users
-    await saveMessage({
-      id: 'm1',
-      text: 'Hello from Alice in lobby',
-      senderId: 'u1',
-      chatroomId: 'r1',
-    });
-    await saveMessage({
-      id: 'm2',
-      text: 'Bob checking in on park',
-      senderId: 'u2',
-      chatroomId: 'r2',
-    });
-    await saveMessage({
-      id: 'm3',
-      text: 'Carol hanging out in alley',
-      senderId: 'u3',
-      chatroomId: 'r3',
-    });
-
-    // Some messages from agents
-    await saveMessage({
-      id: 'm4',
-      text: 'alice-bot here to help!',
-      senderId: 'a1',
-      chatroomId: 'r1',
-      senderIsUser: false,
-    });
-    await saveMessage({
-      id: 'm5',
-      text: 'bob-bot answering your ticket.',
-      senderId: 'a2',
-      chatroomId: 'r2',
-      senderIsUser: false,
-    });
-    await saveMessage({
-      id: 'm6',
-      text: 'carol-bot suggests a new exercise.',
-      senderId: 'a3',
-      chatroomId: 'r3',
-      senderIsUser: false,
-    });
-
-    // Use a "before" timestamp for the message query (optional)
     const before = new Date().toISOString();
 
     console.log('\n=== Chatrooms ===');
-    const rooms = await listChatrooms();
-    console.dir(rooms, { depth: null });
+    const rooms = await adminQuery.listChatrooms();
+    const roomsForPrint = rooms.map(({ createdAt, updatedAt, ...rest }) => rest);
+    console.dir(roomsForPrint, { depth: null });
 
     console.log('\n=== Users ===');
-    const allUsers = await listUsers();
-    console.dir(allUsers, { depth: null });
+    const allUsers = await adminQuery.listUsers();
+    const usersForPrint = allUsers.map(({ createdAt, updatedAt, ...rest }) => rest);
+    console.dir(usersForPrint, { depth: null });
 
     console.log('\n=== Messages from user u1 (latest 10) ===');
-    const u1Messages = await listMessagesBySender({
+    const u1Messages = await adminQuery.listMessagesBySender({
       senderId: 'u1',
       limit: 10,
       before,
     });
-    console.dir(u1Messages, { depth: null });
+    const u1msgForPrint = u1Messages.map(({ createdAt, updatedAt, ...rest }) => rest);
+    console.dir(u1msgForPrint, { depth: null });
 
     console.log('\n=== Messages from agent a1 (latest 10) ===');
-    const a1Messages = await listMessagesBySender({
+    const a1Messages = await adminQuery.listMessagesBySender({
       senderId: 'a1',
       senderIsUser: false,
       limit: 10,
       before,
     });
-    console.dir(a1Messages, { depth: null });
+    const a1msgForPrint = a1Messages.map(({ createdAt, updatedAt, ...rest }) => rest);
+    console.dir(a1msgForPrint, { depth: null });
+
+    console.log('\n=== Messages in chatroom r1 (latest 10) ===');
+    const r1Messages = await adminQuery.listMessagesByChatroom({
+      chatroomId: 'r1',
+      limit: 10,
+      before,
+    });
+    const r1msgForPrint = r1Messages.map(({ createdAt, updatedAt, ...rest }) => rest);
+    console.dir(r1msgForPrint, { depth: null });
+
+    console.log('\n=== Messages in chatroom r2 (latest 10) ===');
+    const r2Messages = await adminQuery.listMessagesByChatroom({
+      chatroomId: 'r2',
+      limit: 10,
+      before,
+    });
+    const r2msgForPrint = r2Messages.map(({ createdAt, updatedAt, ...rest }) => rest);
+    console.dir(r2msgForPrint, { depth: null });
 
     console.log('\nDone.');
   } catch (err) {

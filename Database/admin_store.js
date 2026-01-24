@@ -1,7 +1,9 @@
 import { runAdminQuery } from './db_driver.js';
 
 /**
- * One‑time schema setup: 
+ * Initializes one-time Neo4j schema constraints for users, chatrooms and messages.
+ *
+ * @returns Promise that resolves when all constraints have been created.
  */
 export async function initSchema() {
 
@@ -24,8 +26,15 @@ export async function initSchema() {
     `);
 }
 
-
-// Create or update a user
+/**
+ * Creates or updates a user node with basic profile and preference data.
+ *
+ * @param id - Unique identifier for the user.
+ * @param username - Username associated with the user.
+ * @param email - Email address of the user.
+ * @param preferences - OPTIONAL JSON-serializable user preference object.
+ * @returns The saved user's property object.
+ */
 export async function saveUser({ id, username, email, preferences }) {
   const cypher = `
     MERGE (u:User { id: $id })
@@ -42,11 +51,19 @@ export async function saveUser({ id, username, email, preferences }) {
     email,
     preferences: preferences ? JSON.stringify(preferences) : null,
   });
+  
   return result.records[0]?.get('u').properties;
 }
 
-// Create or update an Agent. 
-// Builds a HOSTS relationship between User and Agent.
+/**
+ * Creates or updates an Agent node and builds a HOSTS relationship from the owning user.
+ *
+ * @param id - Unique identifier for the agent.
+ * @param uid - ID of the User who hosts this agent.
+ * @param agentname - Display name for the agent.
+ * @param persona - OPTIONAL JSON-serializable persona description for the agent.
+ * @returns The updated hosting user's property object.
+ */
 export async function saveAgent({ id, uid, agentname, persona }) {
   const cypher = `
     MATCH (u:User { id: $uid })
@@ -58,11 +75,22 @@ export async function saveAgent({ id, uid, agentname, persona }) {
     MERGE (u)-[:HOSTS]->(a)
     RETURN u
   `;
-  const result = await runAdminQuery(cypher, { id, uid, agentname, persona });
+  const result = await runAdminQuery(cypher, { 
+    id, 
+    uid, 
+    agentname, 
+    persona : persona ? JSON.stringify(persona) : null });
+
   return result.records[0]?.get('u').properties;
 }
 
-// Create or update a chatroom
+/**
+ * Creates or updates a chatroom node with a given name.
+ *
+ * @param id - Unique identifier for the chatroom.
+ * @param roomname - Human-readable name of the chatroom.
+ * @returns The saved chatroom's property object.
+ */
 export async function saveChatroom({ id, roomname }) {
   const cypher = `
     MERGE (c:Chatroom { id: $id })
@@ -75,9 +103,17 @@ export async function saveChatroom({ id, roomname }) {
   return result.records[0]?.get('c').properties;
 }
 
-
-// Create a message in a chatroom. 
-// Builds the SENT relationship between sender and message. 
+/**
+ * Creates a message in a chatroom and links it to the sender and chatroom.
+ *
+ * @param id - Unique identifier for the message.
+ * @param text - Text content of the message.
+ * @param senderId - ID of the sending User or Agent.
+ * @param chatroomId - ID of the chatroom where the message is posted.
+ * @param sentAt - OPTIONAL explicit datetime for when the message was sent.
+ * @param senderIsUser - Whether the sender is a User (true) or Agent (false). Defaults to true.
+ * @returns The saved message's property object.
+ */
 export async function saveMessage({ id, text, senderId, chatroomId, sentAt, senderIsUser = true}) {
   const senderLabel = senderIsUser ? 'User' : 'Agent';
 
