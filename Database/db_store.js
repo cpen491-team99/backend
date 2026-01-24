@@ -86,11 +86,13 @@ export async function createMemory(memoryObj) {
   const { id, embedding, content, metadata } = memoryObj;
 
   const query = `
-    MATCH (owner:Agent { a_id: $speaker_id })
-    
+    MERGE (owner:Agent { a_id: $speaker_id })
+    ON CREATE SET owner.name = $speaker_name
+
     CREATE (m:Memory {
       m_id: $id,
       description: $content,
+      search_text: $search_text,
       embedding: $embedding,
       timestamp: datetime({epochSeconds: toInteger($timestamp)}),
       msg_type: $msg_type,
@@ -98,26 +100,32 @@ export async function createMemory(memoryObj) {
     })
     
     MERGE (owner)-[:OWNS]->(m)
-    
-    // Link to Location
     MERGE (loc:Location { name: $location })
     MERGE (m)-[:AT]->(loc)
 
-    // Handle Audience Relationships
-    WITH m 
+    WITH m
+    
     CALL {
-        WITH m
-        WITH m WHERE "world" IN $audience
-        MERGE (w:GlobalContext { a_id: "world" })
-        MERGE (m)-[:BROADCAST_TO]->(w)
-        RETURN count(*) AS processedCount
-      UNION
-        WITH m
-        UNWIND [x IN $audience WHERE x <> "world"] AS audience_id
-        MERGE (audience_member:Agent { a_id: audience_id })
-        MERGE (m)-[:HEARD_BY]->(audience_member)
-        RETURN count(*) AS processedCount
+      WITH m
+      UNWIND $audienceIds AS audienceId 
+      CALL {
+        WITH m, audienceId
+        WITH m, audienceId WHERE audienceId = 'world'
+        MERGE (world:GlobalContext { a_id: 'world' })
+        MERGE (m)-[:BROADCAST_TO]->(world)
+        RETURN count(*) AS updateCount
+        
+        UNION
+        
+        WITH m, audienceId
+        WITH m, audienceId WHERE audienceId <> 'world'
+        MATCH (listener:Agent { a_id: audienceId }) 
+        MERGE (m)-[:HEARD_BY]->(listener)
+        RETURN count(*) AS updateCount
+      }
+      RETURN count(*) AS totalUpdateCount
     }
+
     RETURN m
   `;
 
@@ -125,14 +133,21 @@ export async function createMemory(memoryObj) {
     id,
     embedding: Float32Array.from(embedding),
     content,
+    search_text: metadata.search_text,
     speaker_id: metadata.speaker_id,
+    speaker_name: metadata.speaker_name,
     timestamp: metadata.timestamp,
     msg_type: metadata.msg_type,
     location: metadata.location,
-    audience: metadata.audience || [] // Expects an array like ["Fox_01", "Bear_02"]
+    audienceIds: metadata.audienceIds || []
   };
 
   const result = await runQuery(query, params);
+
+  if (!result.records || result.records.length === 0) {
+    throw new Error("Memory creation failed: Query returned no records.");
+  }
+
   return result.records[0].get('m').properties;
 }
 
