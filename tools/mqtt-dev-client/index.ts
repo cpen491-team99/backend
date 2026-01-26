@@ -1,10 +1,14 @@
 import mqtt from "mqtt";
 import readline from "readline";
 
-const brokerUrl = process.env.MQTT_URL ?? "mqtt://127.0.0.1:1883";
+const brokerUrl = process.env.MQTT_URL ?? "mqtt://127.0.0.1:49160";
 
-// allow: npx ts-node tools/mqtt-dev-client/index.ts agentA
-const agentId = process.argv[2] ?? `agent-${Math.floor(Math.random() * 1000)}`;
+// NEW: allow 2 params: username + agentId
+// usage: node dist/tools/mqtt-dev-client/index.js <username> <agentId>
+const username = process.argv[2] ?? `user-${Math.floor(Math.random() * 1000)}`;
+const agentId = process.argv[3] ?? `agent-${Math.floor(Math.random() * 1000)}`;
+
+const displayId = `${username}(${agentId})`;
 
 let currentRoom: string | null = null;
 
@@ -13,7 +17,7 @@ const client = mqtt.connect(brokerUrl, {
   clientId: `dev-${agentId}`,
   will: {
     topic: `agents/${agentId}/status`,
-    payload: JSON.stringify({ status: "offline", ts: Date.now() }),
+    payload: JSON.stringify({ status: "offline", username, agentId, ts: Date.now() }),
     qos: 0,
     retain: true,
   },
@@ -32,16 +36,16 @@ function safePublish(topic: string, payload: string, options: any = {}) {
     client.publish(topic, payload, options);
   } else {
     outbox.push({ topic, payload, options });
-    console.log(`[buffered] ${topic} (outbox=${outbox.length})`);
+    console.log(`[buffered][${displayId}] ${topic} (outbox=${outbox.length})`);
   }
 }
 
 function flushOutbox() {
-  if (outbox.length === 0) return;
-  console.log(`[outbox] flushing ${outbox.length} buffered message(s)`);
-  while (outbox.length > 0) {
-    const msg = outbox.shift()!;
-    client.publish(msg.topic, msg.payload, msg.options);
+  if (!client.connected || outbox.length === 0) return;
+  console.log(`[outbox][${displayId}] flushing ${outbox.length} buffered message(s)`);
+  while (outbox.length) {
+    const m = outbox.shift()!;
+    client.publish(m.topic, m.payload, m.options);
   }
 }
 
@@ -50,21 +54,21 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
-rl.setPrompt(`[${agentId}]> `);
+rl.setPrompt(`[${displayId}]> `);
 
 // helper: subscribe to global updates
 function subscribeBase() {
   client.subscribe(["rooms/state", "rooms/+/members"], (err) => {
-    if (err) console.error(`[MQTT][${agentId}] subscribe error:`, err);
-    else console.log(`[MQTT][${agentId}] subscribed to rooms/state + rooms/+/members`);
+    if (err) console.error(`[MQTT][${displayId}] subscribe error:`, err);
+    else console.log(`[MQTT][${displayId}] subscribed to rooms/state + rooms/+/members`);
   });
 }
 
 // helper: subscribe/unsubscribe room chat
 function subRoomChat(roomId: string) {
   client.subscribe(`rooms/${roomId}/chat/out`, (err) => {
-    if (err) console.error(`[MQTT][${agentId}] subscribe chat error:`, err);
-    else console.log(`[MQTT][${agentId}] subscribed to rooms/${roomId}/chat/out`);
+    if (err) console.error(`[MQTT][${displayId}] subscribe chat error:`, err);
+    else console.log(`[MQTT][${displayId}] subscribed to rooms/${roomId}/chat/out`);
   });
 }
 function unsubRoomChat(roomId: string) {
@@ -75,35 +79,28 @@ function unsubRoomChat(roomId: string) {
 function publishOnline() {
   safePublish(
     `agents/${agentId}/status`,
-    JSON.stringify({ status: "online", ts: Date.now() }),
+    JSON.stringify({ status: "online", username, agentId, ts: Date.now() }),
     { qos: 0, retain: true }
   );
 }
-
-// IMPORTANT: if you're exiting and currently disconnected,
-// buffering "offline" is pointless (it will never flush), so only send if connected.
-function publishOfflineBestEffort() {
-  if (!client.connected) {
-    console.log(`[MQTT][${agentId}] offline status not sent (already disconnected)`);
-    return;
-  }
-  client.publish(
+function publishOffline() {
+  safePublish(
     `agents/${agentId}/status`,
-    JSON.stringify({ status: "offline", ts: Date.now() }),
+    JSON.stringify({ status: "offline", username, agentId, ts: Date.now() }),
     { qos: 0, retain: true }
   );
 }
 
 let hbTimer: NodeJS.Timeout | null = null;
 function startHeartbeat() {
-  if (hbTimer) clearInterval(hbTimer);
   hbTimer = setInterval(() => {
-    safePublish(`agents/${agentId}/heartbeat`, "1", { qos: 0, retain: false });
+    // include identity so backend can keep mapping fresh
+    safePublish(
+      `agents/${agentId}/heartbeat`,
+      JSON.stringify({ username, agentId, ts: Date.now() }),
+      { qos: 0, retain: false }
+    );
   }, 5000);
-}
-function stopHeartbeat() {
-  if (hbTimer) clearInterval(hbTimer);
-  hbTimer = null;
 }
 
 function showHelp() {
@@ -119,64 +116,53 @@ function prompt() {
 }
 
 client.on("connect", () => {
-  console.log(`[MQTT][${agentId}] connected: ${brokerUrl}`);
+  console.log(`[MQTT][${displayId}] connected: ${brokerUrl}`);
 
-  // Re-subscribe on every connect (important after reconnect)
+  // Re-subscribe on every connect
   subscribeBase();
-
-  // Re-subscribe to current room chat (important after reconnect)
-  if (currentRoom) {
-    subRoomChat(currentRoom);
-  }
-
-  // Online + heartbeat should resume on reconnect
+  // Re-subscribe to chat/out topic for current room (UI/logging)
+  if (currentRoom) subRoomChat(currentRoom);
+  // Re-announce online status
   publishOnline();
+  // Heartbeat
   startHeartbeat();
 
-  // Re-join room after reconnect so backend restores membership
   if (currentRoom) {
     safePublish(
       `rooms/${currentRoom}/join`,
-      JSON.stringify({ agentId, ts: Date.now() })
+      JSON.stringify({ agentId, username, ts: Date.now() })
     );
   }
-
-  // Now flush anything user typed while offline
   flushOutbox();
 
   showHelp();
   prompt();
 });
 
-// optional: visibility into connection state
 client.on("reconnect", () => {
-  console.log(`[MQTT][${agentId}] reconnecting...`);
-});
-client.on("offline", () => {
-  console.log(`[MQTT][${agentId}] went offline`);
-});
-client.on("close", () => {
-  console.log(`[MQTT][${agentId}] connection closed`);
+  console.log(`[MQTT][${displayId}] reconnecting...`);
 });
 
-// keep prompt clean when messages arrive
+client.on("close", () => {
+  console.log(`[MQTT][${displayId}] connection closed`);
+});
+
 client.on("message", (topic, payload) => {
   const text = payload.toString();
-
-  // Print message, then re-show prompt
   process.stdout.write("\n");
 
   // Pretty-print chat
   const m = topic.match(/^rooms\/([^/]+)\/chat\/out$/);
   if (m) {
     try {
-      const data = JSON.parse(text) as { roomId: string; from: string; msg: string };
-      console.log(`[CHAT][${data.roomId}] ${data.from}: ${data.msg}`);
+      const data = JSON.parse(text) as { roomId: string; fromAgentId: string; fromUsername?: string; msg: string };
+      const who = data.fromUsername ? `${data.fromUsername}(${data.fromAgentId})` : data.fromAgentId;
+      console.log(`[CHAT][${data.roomId}] ${who}: ${data.msg}`);
     } catch {
-      console.log(`[MQTT][${agentId}] ${topic}: ${text}`);
+      console.log(`[MQTT][${displayId}] ${topic}: ${text}`);
     }
   } else {
-    console.log(`[MQTT][${agentId}] ${topic}: ${text}`);
+    console.log(`[MQTT][${displayId}] ${topic}: ${text}`);
   }
 
   prompt();
@@ -187,9 +173,8 @@ rl.on("line", (line) => {
   if (!cmd) return prompt();
 
   if (cmd === "exit") {
-    // best effort only; if disconnected, last will / timeout cleanup handles it
-    publishOfflineBestEffort();
-    stopHeartbeat();
+    publishOffline();
+    if (hbTimer) clearInterval(hbTimer);
     rl.close();
     client.end(true);
     process.exit(0);
@@ -199,39 +184,38 @@ rl.on("line", (line) => {
   if (join) {
     const roomId = join[1];
 
-    // if already in a room, leave it first
     if (currentRoom) {
       safePublish(
         `rooms/${currentRoom}/leave`,
-        JSON.stringify({ agentId, ts: Date.now() })
+        JSON.stringify({ agentId, username, ts: Date.now() })
       );
       unsubRoomChat(currentRoom);
     }
 
     safePublish(
       `rooms/${roomId}/join`,
-      JSON.stringify({ agentId, ts: Date.now() })
+      JSON.stringify({ agentId, username, ts: Date.now() })
     );
     currentRoom = roomId;
     subRoomChat(roomId);
 
-    console.log(`[DEV][${agentId}] joined ${roomId}`);
+    console.log(`[DEV][${displayId}] joined ${roomId}`);
     return prompt();
   }
 
   if (cmd === "leave") {
     if (!currentRoom) {
-      console.log(`[DEV][${agentId}] not in a room`);
+      console.log(`[DEV][${displayId}] not in a room`);
       return prompt();
     }
 
     safePublish(
       `rooms/${currentRoom}/leave`,
-      JSON.stringify({ agentId, ts: Date.now() })
+      JSON.stringify({ agentId, username, ts: Date.now() })
     );
     unsubRoomChat(currentRoom);
 
-    console.log(`[DEV][${agentId}] left ${currentRoom}`);
+    console.log(`[DEV][${displayId}] left ${currentRoom}`);
     currentRoom = null;
     return prompt();
   }
@@ -239,7 +223,7 @@ rl.on("line", (line) => {
   const say = cmd.match(/^say\s+(.+)$/);
   if (say) {
     if (!currentRoom) {
-      console.log(`[DEV][${agentId}] join a room first`);
+      console.log(`[DEV][${displayId}] join a room first`);
       return prompt();
     }
 
@@ -248,7 +232,8 @@ rl.on("line", (line) => {
       `rooms/${currentRoom}/chat/in`,
       JSON.stringify({
         roomId: currentRoom,
-        from: agentId,
+        fromAgentId: agentId,
+        fromUsername: username,
         type: "text",
         msg,
         ts: Date.now(),
@@ -258,7 +243,7 @@ rl.on("line", (line) => {
     return prompt();
   }
 
-  console.log(`[DEV][${agentId}] unknown command: ${cmd}`);
+  console.log(`[DEV][${displayId}] unknown command: ${cmd}`);
   showHelp();
   prompt();
 });
@@ -266,27 +251,24 @@ rl.on("line", (line) => {
 let lastErrLog = 0;
 
 client.on("error", (err: any) => {
-  // emit ECONNREFUSED repeatedly while reconnecting
   const code = err?.code;
   const now = Date.now();
 
-  // Log at most once every 3 seconds for connection-refused errors
   if (code === "ECONNREFUSED") {
+    // log at most once every 3 seconds while broker is down
     if (now - lastErrLog > 3000) {
-      console.log(`[MQTT][${agentId}] broker unavailable (ECONNREFUSED)`);
+      console.log(`[MQTT][${displayId}] broker unavailable (ECONNREFUSED)`);
       lastErrLog = now;
     }
     return;
   }
 
-  console.error(`[MQTT][${agentId}] error:`, err);
+  console.error(`[MQTT][${displayId}] error:`, err);
 });
 
-// optional: graceful Ctrl+C (this is NOT a crash simulation anymore)
+// optional: graceful Ctrl+C
 process.on("SIGINT", () => {
-  publishOfflineBestEffort();
-  stopHeartbeat();
-  rl.close();
-  client.end(true);
-  process.exit(0);
+  publishOffline();
+  if (hbTimer) clearInterval(hbTimer);
+  client.end(true, () => process.exit(0));
 });
