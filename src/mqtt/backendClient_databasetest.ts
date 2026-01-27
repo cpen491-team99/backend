@@ -44,14 +44,36 @@ async function dbInitAndSeedRooms() {
   }
 }
 
-async function dbUpsertUserAndAgent(params: { userId?: string; agentId: string; username?: string }) {
-  const uid = params.userId ?? `u_${params.agentId}`;
-  const username = params.username ?? agentUsername.get(params.agentId) ?? null;
+async function dbUpsertUserAndAgent(params: {
+  userId?: string;
+  agentId: string;
+  username?: string;
+}) {
+  // NEW RULE:
+  // - userId = username (if provided)
+  // - fallback: provided userId
+  // - fallback: u_<agentId>
+  const uid = params.username ?? params.userId ?? `u_${params.agentId}`;
+
+  // Keep username as display name; fallback to uid
+  const username = params.username ?? uid;
+
   try {
-    await saveUser({ id: uid, username: username ?? uid, email: null, preferences: null });
-    await saveAgent({ id: params.agentId, uid, agentname: username ?? params.agentId, persona: null });
+    await saveUser({ id: uid, username, email: null, preferences: null });
+
+    // NEW RULE:
+    // - agentname = agentId (not username)
+    await saveAgent({
+      id: params.agentId,
+      uid,
+      agentname: params.agentId,
+      persona: null,
+    });
   } catch (err) {
-    console.error(`[DB] save user/agent failed (uid=${uid}, agent=${params.agentId}):`, err);
+    console.error(
+      `[DB] save user/agent failed (uid=${uid}, agent=${params.agentId}):`,
+      err
+    );
   }
 }
 
