@@ -1,5 +1,7 @@
 import mqtt, { MqttClient } from "mqtt";
 import { initSchema, saveChatroom, saveUser, saveAgent, saveMessage } from "../../Database/admin_store.js";
+import { initSchema as initMemorySchema, createAgent as createMemoryAgent, createLocation as createMemoryLocation, createMemory } from "../../Database/db_store.js";
+import { MemoryEmbedder } from "../../MemoryEmbedder.js";
 // NOTE: For this database-test backend, we intentionally do NOT close the Neo4j driver during runtime.
 // Close the driver only when shutting down the process.
 
@@ -44,36 +46,14 @@ async function dbInitAndSeedRooms() {
   }
 }
 
-async function dbUpsertUserAndAgent(params: {
-  userId?: string;
-  agentId: string;
-  username?: string;
-}) {
-  // NEW RULE:
-  // - userId = username (if provided)
-  // - fallback: provided userId
-  // - fallback: u_<agentId>
-  const uid = params.username ?? params.userId ?? `u_${params.agentId}`;
-
-  // Keep username as display name; fallback to uid
-  const username = params.username ?? uid;
-
+async function dbUpsertUserAndAgent(params: { userId?: string; agentId: string; username?: string }) {
+  const uid = params.userId ?? `u_${params.agentId}`;
+  const username = params.username ?? agentUsername.get(params.agentId) ?? null;
   try {
-    await saveUser({ id: uid, username, email: null, preferences: null });
-
-    // NEW RULE:
-    // - agentname = agentId (not username)
-    await saveAgent({
-      id: params.agentId,
-      uid,
-      agentname: params.agentId,
-      persona: null,
-    });
+    await saveUser({ id: uid, username: username ?? uid, email: null, preferences: null });
+    await saveAgent({ id: params.agentId, uid, agentname: username ?? params.agentId, persona: null });
   } catch (err) {
-    console.error(
-      `[DB] save user/agent failed (uid=${uid}, agent=${params.agentId}):`,
-      err
-    );
+    console.error(`[DB] save user/agent failed (uid=${uid}, agent=${params.agentId}):`, err);
   }
 }
 
@@ -99,6 +79,93 @@ async function dbSaveChatMessage(params: {
   }
 }
 // ---- end DB helpers ----
+
+
+// ---- Memory DB helpers (vector store / semantic memory DB) ----
+// This uses db_store.js (runQuery -> NEO4J_URI/NEO4J_USERNAME/NEO4J_PASSWORD)
+// and MemoryEmbedder.js to generate embeddings.
+// We intentionally keep this "best-effort": memory DB failures should NOT break MQTT or admin DB logging.
+
+const memoryEmbedder = new MemoryEmbedder();
+let memoryEmbedderInitPromise: Promise<void> | null = null;
+
+async function memoryDbInitAndSeedLocations() {
+  try {
+    await initMemorySchema();
+    for (const r of ROOMS) {
+      // Use room name as both l_id and name (consistent with our test conventions)
+      await createMemoryLocation({ l_id: r, name: r });
+    }
+    console.log(`[MEMDB] schema ensured + locations seeded: ${ROOMS.join(", ")}`);
+  } catch (err) {
+    console.error("[MEMDB] init/seed error:", err);
+  }
+}
+
+function ensureMemoryEmbedderInit() {
+  if (!memoryEmbedderInitPromise) {
+    memoryEmbedderInitPromise = memoryEmbedder.init().catch((err: any) => {
+      console.error("[EMBED] init failed:", err);
+      throw err;
+    });
+  }
+  return memoryEmbedderInitPromise;
+}
+
+async function memoryDbUpsertAgent(params: { agentId: string; name?: string }) {
+  try {
+    // For now, keep agent name == agentId (same convention as admin DB)
+    await createMemoryAgent({ a_id: params.agentId, name: params.agentId, persona: null });
+  } catch (err) {
+    console.error(`[MEMDB] createAgent failed (agent=${params.agentId}):`, err);
+  }
+}
+
+async function memoryDbCreateChatMemory(params: {
+  memoryId: string;       // agentId + Date.now() (we use out.id)
+  text: string;
+  speakerAgentId: string;
+  roomId: string;         // chatroom name
+  msgType?: string;       // "chat" default
+  audienceIds: string[];  // other agents in same room
+  tsMs?: number;
+}) {
+  try {
+    // Ensure embedder is ready (async, best-effort)
+    await ensureMemoryEmbedderInit();
+
+    // Build base memory object using the embedder
+    const base = await memoryEmbedder.createMemoryObject(
+      params.text,
+      params.speakerAgentId,
+      params.audienceIds, // goes into metadata.audience in the embedder
+      params.roomId,
+      params.msgType ?? "chat"
+    );
+
+    // Backend overrides (we do NOT modify MemoryEmbedder.js):
+    // - id should be agentId + Date.now()
+    // - rename metadata.audience -> metadata.audienceIds (db_store expects audienceIds)
+    // - add metadata.search_text + speaker_name for db_store
+    (base as any).id = params.memoryId;
+
+    const meta: any = (base as any).metadata ?? {};
+    meta.audienceIds = meta.audience ?? params.audienceIds;
+    delete meta.audience;
+
+    meta.speaker_name = params.speakerAgentId;  // keep name==agentId for now
+    meta.search_text = params.text;             // simple search text for now
+    // timestamp is already epoch seconds in embedder; keep it.
+
+    (base as any).metadata = meta;
+
+    // Store in memory DB
+    await createMemory(base as any);
+  } catch (err) {
+    console.error(`[MEMDB] createMemory failed (room=${params.roomId}, from=${params.speakerAgentId}):`, err);
+  }
+}
+// ---- end Memory DB helpers ----
 
 
 function publishRoomsState() {
@@ -183,8 +250,14 @@ export function initBackendMqtt() {
     publishRoomsState();
     for (const r of ROOMS) publishRoomMembers(r);
 
-    // DB: ensure constraints + seed chatrooms
+    // DB (admin): ensure constraints + seed chatrooms
     void dbInitAndSeedRooms();
+
+    // DB (memory): ensure constraints + seed locations (rooms)
+    void memoryDbInitAndSeedLocations();
+
+    // Embeddings: kick off embedder init (best-effort)
+    void ensureMemoryEmbedderInit();
   });
 
   client.on("message", (topic, payload) => {
@@ -203,6 +276,8 @@ export function initBackendMqtt() {
             joinRoom(data.agentId, roomId);
             // DB: best-effort upsert (in case status wasn't sent)
             void dbUpsertUserAndAgent({ userId: data.userId, agentId: data.agentId, username: data.username });
+            // Memory DB: ensure Agent exists (best-effort)
+            void memoryDbUpsertAgent({ agentId: data.agentId });
           }
         } catch {
           console.warn("[ROOMS] bad join payload:", msgStr);
@@ -254,8 +329,10 @@ export function initBackendMqtt() {
           } else if (data?.status === "online") {
             lastSeen.set(agentId, now());
             console.log(`[PRESENCE] ${who(agentId)} online`);
-            // DB: save user + agent when we see online
+            // DB (admin): save user + agent when we see online
             void dbUpsertUserAndAgent({ userId: data.userId, agentId, username: data.username ?? data.agentname });
+            // DB (memory): ensure Agent exists (best-effort)
+            void memoryDbUpsertAgent({ agentId });
           }
         } catch {
           console.warn("[PRESENCE] bad status payload:", msgStr);
@@ -345,6 +422,18 @@ export function initBackendMqtt() {
             senderAgentId: fromAgentId,
             text: msg,
             sentAtMs: out.ts,
+          });
+
+          // Memory DB: save as semantic Memory (embedding + audienceIds)
+          const audienceIds = Array.from(roomMembers.get(roomId) ?? []).filter((id) => id !== fromAgentId);
+          void memoryDbCreateChatMemory({
+            memoryId: out.id,
+            text: msg,
+            speakerAgentId: fromAgentId,
+            roomId,
+            msgType: out.type,
+            audienceIds,
+            tsMs: out.ts,
           });
 
           return;
