@@ -77,8 +77,8 @@ async function dbSaveChatMessage(params: {
       senderId: params.senderAgentId,
       chatroomId: params.chatroomId,
       sentAt: params.sentAtMs ? new Date(params.sentAtMs).toISOString() : null,
-      // senderIsUser: false,
-      senderIsUser: true,
+      senderIsUser: false,
+      //senderIsUser: true,
     });
   } catch (err) {
     console.error(`[DB] save message failed (room=${params.chatroomId}, from=${params.senderAgentId}):`, err);
