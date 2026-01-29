@@ -58,7 +58,7 @@ rl.setPrompt(`[${displayId}]> `);
 
 // helper: subscribe to global updates
 function subscribeBase() {
-  client.subscribe(["rooms/state", "rooms/+/members"], (err) => {
+  client.subscribe(["rooms/state", "rooms/+/members", "rooms/+/history/response/+", "senders/history/response/+"], (err) => {
     if (err) console.error(`[MQTT][${displayId}] subscribe error:`, err);
     else console.log(`[MQTT][${displayId}] subscribed to rooms/state + rooms/+/members`);
   });
@@ -109,6 +109,9 @@ function showHelp() {
   console.log("  leave             (leave current room, stay online)");
   console.log("  say <message>     (send chat to current room)");
   console.log("  exit              (offline + disconnect)");
+  console.log("  history room <roomId> [limit] [beforeISO]");
+  console.log("  history agent <agentId> [limit] [beforeISO]");
+  console.log("  history user <username> [limit] [beforeISO]");
 }
 
 function prompt() {
@@ -161,6 +164,54 @@ client.on("message", (topic, payload) => {
     } catch {
       console.log(`[MQTT][${displayId}] ${topic}: ${text}`);
     }
+
+  // Pretty-print history responses
+  const hr = topic.match(/^rooms\/([^/]+)\/history\/response\/([^/]+)$/);
+  if (hr) {
+    try {
+      const data = JSON.parse(text) as { requestId: string; roomId: string; messages: any[]; nextBefore?: any; error?: string };
+      if (data.error) {
+        console.log(`[HISTORY][room=${data.roomId}] error: ${data.error}`);
+      } else {
+        console.log(`[HISTORY][room=${data.roomId}] ${data.messages?.length ?? 0} message(s)`);
+        for (const m of data.messages ?? []) {
+          const when = m.sentAt ?? "";
+          const sender = m.senderId ?? "";
+          const msg = m.text ?? "";
+          console.log(`  - ${when} ${sender}: ${msg}`);
+        }
+        if (data.nextBefore) console.log(`[HISTORY] nextBefore=${data.nextBefore}`);
+      }
+    } catch {
+      console.log(`[MQTT][${displayId}] ${topic}: ${text}`);
+    }
+    prompt();
+    return;
+  }
+
+  const hs = topic.match(/^senders\/history\/response\/([^/]+)$/);
+  if (hs) {
+    try {
+      const data = JSON.parse(text) as { requestId: string; senderType: string; senderId: string; messages: any[]; nextBefore?: any; error?: string };
+      if (data.error) {
+        console.log(`[HISTORY][sender=${data.senderType}:${data.senderId}] error: ${data.error}`);
+      } else {
+        console.log(`[HISTORY][sender=${data.senderType}:${data.senderId}] ${data.messages?.length ?? 0} message(s)`);
+        for (const m of data.messages ?? []) {
+          const when = m.sentAt ?? "";
+          const room = m.chatroomId ?? "";
+          const msg = m.text ?? "";
+          console.log(`  - ${when} [${room}] ${msg}`);
+        }
+        if (data.nextBefore) console.log(`[HISTORY] nextBefore=${data.nextBefore}`);
+      }
+    } catch {
+      console.log(`[MQTT][${displayId}] ${topic}: ${text}`);
+    }
+    prompt();
+    return;
+  }
+
   } else {
     console.log(`[MQTT][${displayId}] ${topic}: ${text}`);
   }
@@ -240,6 +291,42 @@ rl.on("line", (line) => {
       })
     );
 
+    return prompt();
+  }
+
+
+  const histRoom = cmd.match(/^history\s+room\s+(\S+)(?:\s+(\d+))?(?:\s+(.+))?$/);
+  if (histRoom) {
+    const roomId = histRoom[1];
+    const limit = histRoom[2] ? Number(histRoom[2]) : 20;
+    const before = histRoom[3]?.trim() ? histRoom[3].trim() : null;
+    const requestId = `${agentId}-${Date.now()}`;
+
+    safePublish(
+      `rooms/${roomId}/history/request`,
+      JSON.stringify({ requestId, limit, before }),
+      { qos: 0, retain: false }
+    );
+
+    console.log(`[DEV][${displayId}] requested room history: room=${roomId} requestId=${requestId}`);
+    return prompt();
+  }
+
+  const histSender = cmd.match(/^history\s+(agent|user)\s+(\S+)(?:\s+(\d+))?(?:\s+(.+))?$/);
+  if (histSender) {
+    const senderType = histSender[1] as "agent" | "user";
+    const senderId = histSender[2];
+    const limit = histSender[3] ? Number(histSender[3]) : 20;
+    const before = histSender[4]?.trim() ? histSender[4].trim() : null;
+    const requestId = `${agentId}-${Date.now()}`;
+
+    safePublish(
+      `senders/history/request`,
+      JSON.stringify({ requestId, senderType, senderId, limit, before }),
+      { qos: 0, retain: false }
+    );
+
+    console.log(`[DEV][${displayId}] requested sender history: ${senderType}=${senderId} requestId=${requestId}`);
     return prompt();
   }
 

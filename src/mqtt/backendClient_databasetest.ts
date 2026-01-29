@@ -1,5 +1,6 @@
 import mqtt, { MqttClient } from "mqtt";
 import { initSchema, saveChatroom, saveUser, saveAgent, saveMessage } from "../../Database/admin_store.js";
+import { listMessagesByChatroom, listMessagesBySender } from "../../Database/admin_query.js";
 import { initSchema as initMemorySchema, createAgent as createMemoryAgent, createLocation as createMemoryLocation, createMemory } from "../../Database/db_store.js";
 import { MemoryEmbedder } from "../../MemoryEmbedder.js";
 // NOTE: For this database-test backend, we intentionally do NOT close the Neo4j driver during runtime.
@@ -47,11 +48,15 @@ async function dbInitAndSeedRooms() {
 }
 
 async function dbUpsertUserAndAgent(params: { userId?: string; agentId: string; username?: string }) {
-  const uid = params.userId ?? `u_${params.agentId}`;
-  const username = params.username ?? agentUsername.get(params.agentId) ?? null;
+  // Test convention:
+  // - userId stored in DB should equal frontend username (for now)
+  // - agentname stored in DB should equal agentId
+  const uid = params.username ?? params.userId ?? `u_${params.agentId}`;
+  const username = params.username ?? uid;
+
   try {
-    await saveUser({ id: uid, username: username ?? uid, email: null, preferences: null });
-    await saveAgent({ id: params.agentId, uid, agentname: username ?? params.agentId, persona: null });
+    await saveUser({ id: uid, username, email: null, preferences: null });
+    await saveAgent({ id: params.agentId, uid, agentname: params.agentId, persona: null });
   } catch (err) {
     console.error(`[DB] save user/agent failed (uid=${uid}, agent=${params.agentId}):`, err);
   }
@@ -72,7 +77,8 @@ async function dbSaveChatMessage(params: {
       senderId: params.senderAgentId,
       chatroomId: params.chatroomId,
       sentAt: params.sentAtMs ? new Date(params.sentAtMs).toISOString() : null,
-      senderIsUser: false,
+      // senderIsUser: false,
+      senderIsUser: true,
     });
   } catch (err) {
     console.error(`[DB] save message failed (room=${params.chatroomId}, from=${params.senderAgentId}):`, err);
@@ -168,6 +174,23 @@ async function memoryDbCreateChatMemory(params: {
 // ---- end Memory DB helpers ----
 
 
+// ---- Admin DB query helpers (history) ----
+// neo4j-driver may return DateTime objects in properties; stringify them for JSON transport.
+function normalizeAdminMessages(messages: any[]) {
+  return messages.map((m: any) => {
+    const out: any = { ...m };
+    for (const k of ["sentAt", "createdAt"]) {
+      if (out[k] && typeof out[k] !== "string") {
+        out[k] = typeof out[k].toString === "function" ? out[k].toString() : String(out[k]);
+      }
+    }
+    return out;
+  });
+}
+// ---- end Admin DB query helpers ----
+
+
+
 function publishRoomsState() {
   if (!client) return;
 
@@ -240,6 +263,9 @@ export function initBackendMqtt() {
         "rooms/+/chat/in",
         "agents/+/status",
         "agents/+/heartbeat",
+        // History query request topics (Admin DB)
+        "rooms/+/history/request",
+        "senders/history/request",
       ],
       (err) => {
         if (err) console.error("[MQTT][backend] subscribe error:", err);
@@ -441,6 +467,107 @@ export function initBackendMqtt() {
           console.warn("[CHAT] bad chat payload:", msgStr);
           return;
         }
+      }
+    }
+
+    // rooms/<roomId>/history/request  (Admin DB)
+    // Request payload: { requestId: string, limit?: number, before?: string|null }
+    // Response topic: rooms/<roomId>/history/response/<requestId>
+    {
+      const m = topic.match(/^rooms\/([^/]+)\/history\/request$/);
+      if (m) {
+        const roomId = m[1];
+        try {
+          const data = JSON.parse(msgStr) as { requestId: string; limit?: number; before?: string | null };
+          const requestId = data?.requestId ?? `req-${now()}`;
+          const limit = Math.max(1, Math.min(Number(data?.limit ?? 20), 100));
+          const before = data?.before ?? null;
+          const beforeArg = typeof before === "string" ? undefined : before;
+
+          Promise.resolve()
+            .then(() => listMessagesByChatroom({ chatroomId: roomId, before: beforeArg, limit }))
+            .then((messages: any[]) => {
+              const norm = normalizeAdminMessages(messages);
+              const nextBefore = norm.length ? (norm[norm.length - 1].sentAt ?? null) : null;
+
+              client!.publish(
+                `rooms/${roomId}/history/response/${requestId}`,
+                JSON.stringify({ requestId, roomId, messages: norm, nextBefore, ts: now() }),
+                { qos: 0, retain: false }
+              );
+            })
+            .catch((err: any) => {
+              console.error(`[HISTORY] room history query failed (room=${roomId}):`, err);
+              client!.publish(
+                `rooms/${roomId}/history/response/${requestId}`,
+                JSON.stringify({ requestId, roomId, messages: [], error: "query_failed", ts: now() }),
+                { qos: 0, retain: false }
+              );
+            });
+        } catch {
+          console.warn("[HISTORY] bad room history request payload:", msgStr);
+        }
+        return;
+      }
+    }
+
+    // senders/history/request  (Admin DB)
+    // Request payload: { requestId: string, senderType: "user"|"agent", senderId: string, limit?: number, before?: string|null }
+    // Response topic: senders/history/response/<requestId>
+    {
+      const m = topic.match(/^senders\/history\/request$/);
+      if (m) {
+        try {
+          const data = JSON.parse(msgStr) as {
+            requestId: string;
+            senderType: "user" | "agent";
+            senderId: string;
+            limit?: number;
+            before?: string | null;
+          };
+
+          const requestId = data?.requestId ?? `req-${now()}`;
+          const senderType = data?.senderType ?? "agent";
+          const senderId = data?.senderId;
+          const limit = Math.max(1, Math.min(Number(data?.limit ?? 20), 100));
+          const before = data?.before ?? null;
+
+          if (!senderId) {
+            client!.publish(
+              `senders/history/response/${requestId}`,
+              JSON.stringify({ requestId, senderType, senderId: null, messages: [], error: "missing_senderId", ts: now() }),
+              { qos: 0, retain: false }
+            );
+            return;
+          }
+
+          const senderIsUser = senderType === "user";
+          const beforeArg = typeof before === "string" ? undefined : before;
+
+          Promise.resolve()
+            .then(() => listMessagesBySender({ senderId, senderIsUser, before: beforeArg, limit }))
+            .then((messages: any[]) => {
+              const norm = normalizeAdminMessages(messages);
+              const nextBefore = norm.length ? (norm[norm.length - 1].sentAt ?? null) : null;
+
+              client!.publish(
+                `senders/history/response/${requestId}`,
+                JSON.stringify({ requestId, senderType, senderId, messages: norm, nextBefore, ts: now() }),
+                { qos: 0, retain: false }
+              );
+            })
+            .catch((err: any) => {
+              console.error(`[HISTORY] sender history query failed (sender=${senderId}, type=${senderType}):`, err);
+              client!.publish(
+                `senders/history/response/${requestId}`,
+                JSON.stringify({ requestId, senderType, senderId, messages: [], error: "query_failed", ts: now() }),
+                { qos: 0, retain: false }
+              );
+            });
+        } catch {
+          console.warn("[HISTORY] bad sender history request payload:", msgStr);
+        }
+        return;
       }
     }
   });
