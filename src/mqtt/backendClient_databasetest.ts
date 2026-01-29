@@ -189,6 +189,18 @@ function normalizeAdminMessages(messages: any[]) {
 }
 // ---- end Admin DB query helpers ----
 
+// ---- Memory query helper (lazy import) ----
+// We lazy-import because db_query.js uses top-level await to init the embedder.
+type FindMemoriesFn = (textQuery: string, currentAgentId: string) => Promise<any>;
+let _findMemories: FindMemoriesFn | null = null;
+
+async function getFindMemories(): Promise<FindMemoriesFn> {
+  if (_findMemories) return _findMemories;
+  const mod = await import("../../Database/db_query.js");
+  _findMemories = mod.findMemories as FindMemoriesFn;
+  return _findMemories;
+}
+
 
 
 function publishRoomsState() {
@@ -266,6 +278,8 @@ export function initBackendMqtt() {
         // History query request topics (Admin DB)
         "rooms/+/history/request",
         "senders/history/request",
+        // NEW: memory search request
+        "agents/+/memory/find/request",
       ],
       (err) => {
         if (err) console.error("[MQTT][backend] subscribe error:", err);
@@ -570,6 +584,61 @@ export function initBackendMqtt() {
         return;
       }
     }
+
+    // agents/<agentId>/memory/find/request
+    {
+      const m = topic.match(/^agents\/([^/]+)\/memory\/find\/request$/);
+      if (m) {
+        const requesterAgentId = m[1];
+
+        let data: any;
+        try {
+          data = JSON.parse(msgStr);
+        } catch {
+          console.warn("[MEMORY] bad find request payload:", msgStr);
+          return;
+        }
+
+        const { requestId, textQuery } = data ?? {};
+        if (!requestId || typeof textQuery !== "string" || !textQuery.trim()) {
+          console.warn("[MEMORY] invalid find request:", msgStr);
+          return;
+        }
+
+        // async IIFE — this is the key fix
+        (async () => {
+          try {
+            const findMemories = await getFindMemories();
+            const result = await findMemories(textQuery, requesterAgentId);
+
+            const records = (result?.records ?? []).map((r: any) => ({
+              text: r.get("text"),
+              from: r.get("from"),
+              location: r.get("location"),
+              score: r.get("score"),
+            }));
+
+            const respTopic = `agents/${requesterAgentId}/memory/find/response/${requestId}`;
+            client!.publish(
+              respTopic,
+              JSON.stringify({
+                requestId,
+                agentId: requesterAgentId,
+                textQuery,
+                results: records,
+                ts: now(),
+              }),
+              { qos: 0, retain: false }
+            );
+          } catch (err) {
+            console.error("[MEMORY] find handler error:", err);
+          }
+        })();
+
+        return;
+      }
+    }
+
   });
 
   // heartbeat timeout cleanup

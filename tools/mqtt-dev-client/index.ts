@@ -58,7 +58,11 @@ rl.setPrompt(`[${displayId}]> `);
 
 // helper: subscribe to global updates
 function subscribeBase() {
-  client.subscribe(["rooms/state", "rooms/+/members", "rooms/+/history/response/+", "senders/history/response/+"], (err) => {
+  client.subscribe(["rooms/state",
+    "rooms/+/members",
+    "rooms/+/history/response/+",
+    "senders/history/response/+",
+    `agents/${agentId}/memory/find/response/+`,], (err) => {
     if (err) console.error(`[MQTT][${displayId}] subscribe error:`, err);
     else console.log(`[MQTT][${displayId}] subscribed to rooms/state + rooms/+/members`);
   });
@@ -112,6 +116,7 @@ function showHelp() {
   console.log("  history room <roomId> [limit] [beforeISO]");
   console.log("  history agent <agentId> [limit] [beforeISO]");
   console.log("  history user <username> [limit] [beforeISO]");
+  console.log("  memory <query>    (semantic search in memory DB)");
 }
 
 function prompt() {
@@ -291,6 +296,21 @@ rl.on("line", (line) => {
       })
     );
 
+    return prompt();
+  }
+
+  const memory = cmd.match(/^memory\s+(.+)$/);
+  if (memory) {
+    const textQuery = memory[1].trim();
+    const requestId = `${agentId}-${Date.now()}`;
+
+    safePublish(
+      `agents/${agentId}/memory/find/request`,
+      JSON.stringify({ requestId, textQuery }),
+      { qos: 0, retain: false }
+    );
+
+    console.log(`[DEV][${displayId}] memory search requested (requestId=${requestId})`);
     return prompt();
   }
 
