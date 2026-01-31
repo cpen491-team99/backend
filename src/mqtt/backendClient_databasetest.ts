@@ -10,8 +10,14 @@ import { MemoryEmbedder } from "../../MemoryEmbedder.js";
 let client: MqttClient | null = null;
 
 // precreated rooms
-const ROOMS = ["lobby", "forest", "kitchen"] as const;
+const ROOMS = ["library", "cafe", "park", "sports-court", "private-room"] as const;
 type RoomId = (typeof ROOMS)[number];
+
+const PRIVATE_ROOM_ID = "private-room" as const;
+
+function shouldWriteToMemoryDb(roomId: string) {
+  return roomId !== PRIVATE_ROOM_ID;
+}
 
 // room -> members (store agentIds)
 const roomMembers = new Map<string, Set<string>>(
@@ -465,16 +471,31 @@ export function initBackendMqtt() {
           });
 
           // Memory DB: save as semantic Memory (embedding + audienceIds)
-          const audienceIds = Array.from(roomMembers.get(roomId) ?? []).filter((id) => id !== fromAgentId);
-          void memoryDbCreateChatMemory({
-            memoryId: out.id,
-            text: msg,
-            speakerAgentId: fromAgentId,
-            roomId,
-            msgType: out.type,
-            audienceIds,
-            tsMs: out.ts,
-          });
+          if (shouldWriteToMemoryDb(roomId)) {
+            const audienceIds = Array.from(roomMembers.get(roomId) ?? []).filter((id) => id !== fromAgentId);
+            void memoryDbCreateChatMemory({
+              memoryId: out.id,
+              text: msg,
+              speakerAgentId: fromAgentId,
+              roomId,
+              msgType: out.type,
+              audienceIds,
+              tsMs: out.ts,
+            });
+          } else {
+            console.log(`[MEMDB] skip memory write for private room (room=${roomId})`);
+          }
+
+          // const audienceIds = Array.from(roomMembers.get(roomId) ?? []).filter((id) => id !== fromAgentId);
+          // void memoryDbCreateChatMemory({
+          //   memoryId: out.id,
+          //   text: msg,
+          //   speakerAgentId: fromAgentId,
+          //   roomId,
+          //   msgType: out.type,
+          //   audienceIds,
+          //   tsMs: out.ts,
+          // });
 
           return;
         } catch {
