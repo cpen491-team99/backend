@@ -666,7 +666,7 @@ export function initBackendMqtt() {
   setInterval(() => {
     const t = now();
     for (const [agentId, seen] of lastSeen.entries()) {
-      if (t - seen > 20000) {
+      if (t - seen > 900000000) {
         console.log(`[PRESENCE] ${who(agentId)} heartbeat timeout -> remove from room`);
         lastSeen.delete(agentId);
         removeAgentFromRoom(agentId);
