@@ -1,14 +1,26 @@
 {
+	"type": "module",
 	"engines": {
 		"node": "24.x"
 	},
 	"dependencies": {
+		"@huggingface/transformers": "^3.8.1",
 		"axios": "^1.13.2",
+		"dotenv": "^17.2.3",
 		"express": "^4.22.1",
 		"mongodb": "^6.21.0",
+		"mqtt": "^5.14.1",
+		"neo4j-driver": "~5.28.0",
 		"ws": "^8.19.0"
 	},
 	"devDependencies": {
-		"nodemon": "^3.1.7"
+		"@types/node": "^25.0.6",
+		"nodemon": "^3.1.7",
+		"ts-node": "^10.9.2",
+		"typescript": "^5.9.3"
+	},
+	"scripts": {
+		"build": "tsc",
+		"start": "node server.js"
 	}
 }
