@@ -21,6 +21,8 @@
 	},
 	"scripts": {
 		"build": "tsc",
-		"start": "node server.js"
+		"start": "node server_test.js",
+		"dockerup": "docker compose -f infra/mqtt-broker/docker-compose.yml up -d",
+		"dockerdown": "docker compose -f infra/mqtt-broker/docker-compose.yml down"
 	}
 }
